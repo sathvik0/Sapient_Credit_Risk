@@ -1,0 +1,147 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Fri Aug  9 09:03:11 2019
+
+@author: user
+"""
+
+import numpy as np
+import pandas as pd
+import os
+
+os.chdir(r"C:\Users\user\Desktop\bachi udemy\loan prediction hackathon")
+train= pd.read_csv('application_train.csv')
+test= pd.read_csv('application_test.csv')
+submission= pd.read_csv('sample_submission.csv')
+print(train.isna().sum())   
+
+
+
+train['DAYS_BIRTH']=abs(train['DAYS_BIRTH'])
+train['DAYS_EMPLOYED']=abs(train['DAYS_EMPLOYED'])
+train['DAYS_REGISTRATION']=abs(train['DAYS_REGISTRATION'])
+train['DAYS_ID_PUBLISH']=abs(train['DAYS_ID_PUBLISH'])
+
+test['DAYS_BIRTH']=abs(test['DAYS_BIRTH'])
+test['DAYS_EMPLOYED']=abs(test['DAYS_EMPLOYED'])
+test['DAYS_REGISTRATION']=abs(test['DAYS_REGISTRATION'])
+test['DAYS_ID_PUBLISH']=abs(test['DAYS_ID_PUBLISH'])
+
+
+def add_noise(series, noise_level):
+    return series * (1 + noise_level * np.random.randn(len(series)))
+
+def target_encode(trn_series=None, 
+                  tst_series=None, 
+                  target=None, 
+                  min_samples_leaf=1, 
+                  smoothing=1,
+                  noise_level=0):
+    
+    assert len(trn_series) == len(target)
+    assert trn_series.name == tst_series.name
+    temp = pd.concat([trn_series, target], axis=1)
+    # Compute target mean 
+    averages = temp.groupby(by=trn_series.name)[target.name].agg(["mean", "count"])
+    # Compute smoothing
+    smoothing = 1 / (1 + np.exp(-(averages["count"] - min_samples_leaf) / smoothing))
+    # Apply average function to all target data
+    prior = target.mean()
+    # The bigger the count the less full_avg is taken into account
+    averages[target.name] = prior * (1 - smoothing) + averages["mean"] * smoothing
+    averages.drop(["mean", "count"], axis=1, inplace=True)
+    # Apply averages to trn and tst series
+    ft_trn_series = pd.merge(
+        trn_series.to_frame(trn_series.name),
+        averages.reset_index().rename(columns={'index': target.name, target.name: 'average'}),
+        on=trn_series.name,
+        how='left')['average'].rename(trn_series.name + '_mean').fillna(prior)
+    # pd.merge does not keep the index so restore it
+    ft_trn_series.index = trn_series.index 
+    ft_tst_series = pd.merge(
+        tst_series.to_frame(tst_series.name),
+        averages.reset_index().rename(columns={'index': target.name, target.name: 'average'}),
+        on=tst_series.name,
+        how='left')['average'].rename(trn_series.name + '_mean').fillna(prior)
+    # pd.merge does not keep the index so restore it
+    ft_tst_series.index = tst_series.index
+    return add_noise(ft_trn_series, noise_level), add_noise(ft_tst_series, noise_level)
+
+for i in train.select_dtypes(exclude='object').columns:
+    train[i]=train[i].fillna(train[i].mean())
+for i in train.select_dtypes(include='object').columns:
+    train[i]=train[i].fillna(train[i].mode())
+    
+for i in test.select_dtypes(exclude='object').columns:
+    test[i]=test[i].fillna(test[i].mean())
+for i in test.select_dtypes(include='object').columns:
+    test[i]=test[i].fillna(test[i].mode())
+    
+    #target_Encoding
+for i in train.select_dtypes(include='object').columns:
+    print(i)
+    print(len(train[i].unique()))
+    trn, sub = target_encode(train[i], 
+                         test[i], 
+                         target=train.TARGET, 
+                         min_samples_leaf=100,
+                         smoothing=10,
+                         noise_level=0.01)
+    train[i]=trn
+    test[i]=sub
+    
+train=train.dropna()
+test=test[[train.columns]]
+train_data=train.drop(['TARGET','SK_ID_CURR'],axis=1)
+train_labels=train[['TARGET']]
+test_data=test.drop(['SK_ID_CURR'],axis=1)
+
+
+from xgboost import XGBClassifier
+model = XGBClassifier(
+ learning_rate =0.1,
+ n_estimators=200,
+ max_depth=5,
+ min_child_weight=1,
+ gamma=0,
+ eval_metric='auc',
+ subsample=0.8,
+ colsample_bytree=0.8,
+ objective= 'binary:logistic',
+ nthread=4,
+ scale_pos_weight=1,
+ seed=27)
+
+model.fit(train_data,train_labels)
+
+Preds=model.predict(test_data)
+
+sub=pd.read_csv('sample_submission.csv')
+
+sub['TARGET']=Preds
+
+sub.to_csv('subn_xgb17.csv',index=False)
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
